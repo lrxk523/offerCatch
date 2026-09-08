@@ -50,16 +50,55 @@ def _detect_gpu() -> bool:
 class OCREngine:
     """
     OCR 引擎封装，内置图像预处理流水线。
-    策略优先级: PaddleOCR > EasyOCR > tesseract (自动 fallback)
+
+    策略优先级:
+      qwen_vl(云转录,需 VISION_*) > PaddleOCR > EasyOCR > tesseract
+    通过 OCR_ENGINE 环境变量强制指定: "qwen_vl" | "paddle" | "auto"(默认)
     """
+
+    # 云转录忠实指令（转录层不解析、不改写，只出原文）
+    TRANSCRIBE_SYSTEM_PROMPT = (
+        "你是文档文字转录引擎。把图片中的文字逐字转录为纯文本，"
+        "不纠错、不补全、不格式化、不总结、不翻译。"
+        "保持原文换行结构，识别不清的字符用 [无法识别] 标记，不要跳过整行。"
+    )
 
     def __init__(self):
         self._engine = None
         self._engine_type = ""
         self._use_gpu = False
+        self._vision_client = None
+        self._vision_model = ""
+
+    @property
+    def engine_name(self) -> str:
+        return self._engine_type
+
+    def _is_qwen_vl_enabled(self) -> bool:
+        """是否配置了可用的视觉模型"""
+        from app.core.config import get_vision_config
+        _, _, model = get_vision_config()
+        return bool(model)
 
     async def initialize(self) -> str:
         """按优先级初始化 OCR 引擎，返回实际使用的引擎名称"""
+        forced = os.getenv("OCR_ENGINE", "auto").lower().strip()
+
+        # 云转录优先（除非显式 OCR_ENGINE=paddle/本地）
+        if forced in ("qwen_vl", "auto") and self._is_qwen_vl_enabled():
+            from app.core.config import create_vision_client
+            self._vision_client, self._vision_model = create_vision_client()
+            if self._vision_client is not None:
+                self._engine_type = "qwen_vl"
+                print(f"[OCR] Using Qwen VL cloud transcription (model={self._vision_model})")
+                return self._engine_type
+
+        if forced == "qwen_vl":
+            raise RuntimeError(
+                "OCR_ENGINE=qwen_vl 但未配置视觉模型。请设置 VISION_API_KEY/VISION_BASE_URL/VISION_MODEL"
+                " 或改回 OCR_ENGINE=auto 使用本地 OCR。"
+            )
+
         errors = []
         self._use_gpu = _detect_gpu()
         gpu_tag = "GPU" if self._use_gpu else "CPU"
@@ -166,6 +205,10 @@ class OCREngine:
         """从图片提取文字"""
         image = self._load_image(image_input)
 
+        # 云 VL 转录不预处理（原图直接送模型，避免无谓放大/压缩）
+        if self._engine_type == "qwen_vl":
+            preprocess = False
+
         if preprocess:
             image = self._preprocess_image(image)
 
@@ -177,6 +220,7 @@ class OCREngine:
             results = await asyncio.gather(*tasks)
             all_texts = [t for t in results if t]
         else:
+            # qwen_vl 云转录逐片串行（避免 API 限流，保持顺序）
             all_texts = []
             for slice_img in slices:
                 text = await self._ocr_slice(slice_img)
@@ -187,13 +231,52 @@ class OCREngine:
 
     async def _ocr_slice(self, image: Image.Image) -> str:
         """对单张图片切片执行 OCR"""
-        if self._engine_type == "paddleocr":
+        if self._engine_type == "qwen_vl":
+            return await self._ocr_qwen_vl(image)
+        elif self._engine_type == "paddleocr":
             return await self._ocr_paddle(image)
         elif self._engine_type == "easyocr":
             return await self._ocr_easyocr(image)
         elif self._engine_type == "tesseract":
             return await self._ocr_tesseract(image)
         return ""
+
+    async def _ocr_qwen_vl(self, image: Image.Image) -> str:
+        """Qwen VL 云转录（忠实转录，不改写）"""
+        buf = BytesIO()
+        image.convert("RGB").save(buf, format="JPEG", quality=90)
+        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+        def _call():
+            resp = self._vision_client.chat.completions.create(
+                model=self._vision_model,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                        {"type": "text", "text": self.TRANSCRIBE_SYSTEM_PROMPT},
+                    ],
+                }],
+                max_tokens=4096,
+                temperature=0.0,
+            )
+            return (resp.choices[0].message.content or "").strip()
+
+        try:
+            text = await asyncio.to_thread(_call)
+            if not text:
+                return ""
+            # 转录结果只取纯文本（去掉可能的围栏/解释，防御模型不听话）
+            if text.startswith("```"):
+                text = text.strip("`")
+                # 去掉可能残留的语言标记行
+                parts = text.split("\n", 1)
+                if len(parts) == 2 and parts[0].strip().lower() in ("text", "txt", "plaintext"):
+                    text = parts[1]
+            return text.strip()
+        except Exception as e:
+            print(f"[OCR] Qwen VL 转录失败: {e}")
+            raise
 
     async def _ocr_paddle(self, image: Image.Image) -> str:
         """PaddleOCR 识别"""
@@ -335,6 +418,23 @@ class OCREngine:
         else:
             raise ValueError(f"不支持的图片输入类型: {type(image_input)}")
 
-    @property
-    def engine_name(self) -> str:
-        return self._engine_type
+
+# ---- 全局共享 OCR 单例 ----
+# 所有模块（agent_runtime / 各 skill / API 路由）统一从此获取，
+# 避免 PaddleOCR 数百 MB 模型或云 VL client 被重复初始化。
+
+_shared_ocr: Optional[OCREngine] = None
+_shared_ocr_lock = asyncio.Lock()
+
+
+async def get_shared_ocr() -> OCREngine:
+    """获取全局共享 OCR 引擎（懒初始化，线程安全）"""
+    global _shared_ocr
+    if _shared_ocr is not None:
+        return _shared_ocr
+    async with _shared_ocr_lock:
+        if _shared_ocr is None:
+            engine = OCREngine()
+            await engine.initialize()
+            _shared_ocr = engine
+    return _shared_ocr

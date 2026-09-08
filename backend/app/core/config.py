@@ -13,14 +13,16 @@ PROVIDERS = {
         "resume_model": "Qwen/Qwen2.5-72B-Instruct",
         "parse_model": "Qwen/Qwen2.5-7B-Instruct",
         "api_key_env": "SILICONFLOW_API_KEY",
+        "vision_model": "Qwen/Qwen3-VL-8B-Instruct",
     },
     "deepseek": {
         "name": "DeepSeek",
         "base_url": "https://api.deepseek.com/v1",
-        "default_model": "deepseek-chat",
-        "resume_model": "deepseek-chat",
-        "parse_model": "deepseek-chat",
+        "default_model": "deepseek-v4-flash",
+        "resume_model": "deepseek-v4-pro",
+        "parse_model": "deepseek-v4-flash",
         "api_key_env": "DEEPSEEK_API_KEY",
+        "vision_model": None,  # DeepSeek API 无视觉能力（视觉统一走 VISION_*）
     },
     "zhipu": {
         "name": "智谱 GLM",
@@ -29,6 +31,7 @@ PROVIDERS = {
         "resume_model": "glm-4-plus",
         "parse_model": "glm-4-flash",
         "api_key_env": "ZHIPU_API_KEY",
+        "vision_model": "glm-4v-flash",
     },
     "moonshot": {
         "name": "Moonshot Kimi",
@@ -37,6 +40,7 @@ PROVIDERS = {
         "resume_model": "moonshot-v1-8k",
         "parse_model": "moonshot-v1-8k",
         "api_key_env": "MOONSHOT_API_KEY",
+        "vision_model": None,  # moonshot-v1 系列无视觉
     },
     "qwen": {
         "name": "通义千问 DashScope",
@@ -45,6 +49,7 @@ PROVIDERS = {
         "resume_model": "qwen-max",
         "parse_model": "qwen-plus",
         "api_key_env": "DASHSCOPE_API_KEY",
+        "vision_model": "qwen3.5-omni-flash",
     },
     "doubao": {
         "name": "字节豆包",
@@ -53,6 +58,7 @@ PROVIDERS = {
         "resume_model": "doubao-pro-4k",
         "parse_model": "doubao-lite-4k",
         "api_key_env": "DOUBAO_API_KEY",
+        "vision_model": None,  # 豆包视觉需独立 endpoint，暂不配置
     },
 }
 
@@ -79,23 +85,26 @@ def get_llm_config(
     provider = PROVIDERS.get(provider_name)
 
     if provider:
-        # 使用预设提供商
-        base_url = os.getenv("OPENAI_BASE_URL", provider["base_url"])
-        api_key = os.getenv("OPENAI_API_KEY", os.getenv(provider["api_key_env"], ""))
-        if not api_key:
-            # 尝试所有可能的 API key 环境变量
-            for env_name in ["OPENAI_API_KEY", provider["api_key_env"]]:
-                val = os.getenv(env_name, "")
-                if val and not val.startswith("sk-your-"):
-                    api_key = val
-                    break
+        # 使用预设提供商：base_url 固定为 provider 端点
+        # key 优先 provider 专属变量 (DEEPSEEK_API_KEY 等)，回落 OPENAI_API_KEY 兼容旧配置
+        # ⚠️ OPENAI_BASE_URL/OPENAI_MODEL 不参与——那是无 LLM_PROVIDER 时的自定义通道，
+        #    若残留其他平台的 base_url/model 会造成 key/端点错配
+        base_url = provider["base_url"]
+        api_key = os.getenv(provider["api_key_env"], "")
+        if not api_key or api_key.startswith("your-"):
+            api_key = os.getenv("OPENAI_API_KEY", "")
     else:
-        # 使用传统环境变量
+        # 使用传统环境变量（自定义 OpenAI 兼容端点）
         base_url = os.getenv("OPENAI_BASE_URL", "https://api.siliconflow.cn/v1")
         api_key = os.getenv("OPENAI_API_KEY", "")
 
     # ---- 2. 确定 model ----
-    if purpose == "resume":
+    if purpose == "jd":
+        # JD 结构化抽取（原正则解析的 LLM 替代）— 默认与 parse 同级小模型
+        model = os.getenv("JD_MODEL", "")
+        if not model:
+            model = provider["parse_model"] if provider else "Qwen/Qwen2.5-7B-Instruct"
+    elif purpose == "resume":
         model = os.getenv("RESUME_MODEL", "")
         if not model:
             model = provider["resume_model"] if provider else "Qwen/Qwen2.5-72B-Instruct"
@@ -108,9 +117,55 @@ def get_llm_config(
         if not model:
             model = provider.get("resume_model", provider["default_model"]) if provider else "Qwen/Qwen2.5-72B-Instruct"
     else:
-        model = os.getenv("OPENAI_MODEL", "")
-        if not model:
-            model = provider["default_model"] if provider else "Qwen/Qwen2.5-7B-Instruct"
+        if provider:
+            model = provider["default_model"]
+        else:
+            model = os.getenv("OPENAI_MODEL", "")
+            if not model:
+                model = "Qwen/Qwen2.5-7B-Instruct"
+
+    return api_key, base_url, model
+
+
+def get_vision_config() -> Tuple[str, str, str]:
+    """
+    获取视觉 (VL) 模型配置 (api_key, base_url, model)。
+
+    启用规则（必须显式配置，避免误用文本 key 导致 4xx）:
+      VISION_API_KEY 或 VISION_MODEL 任一非空 → 启用云转录
+    配置优先级:
+      1. 独立环境变量 VISION_API_KEY / VISION_BASE_URL / VISION_MODEL
+      2. 缺失项回落 LLM_PROVIDER 预设 (base_url / vision_model / api_key_env)
+
+    未显式配置 → 返回 ("", "", "")，OCR_ENGINE=auto 时回落本地 OCR。
+    VISION_MODEL=none|off|0|false 可显式禁用视觉。
+    """
+    api_key = os.getenv("VISION_API_KEY", "")
+    base_url = os.getenv("VISION_BASE_URL", "")
+    model = os.getenv("VISION_MODEL", "")
+
+    # 显式禁用
+    if model.lower() in ("none", "off", "0", "false"):
+        return "", "", ""
+
+    # 必须显式启用（VISION_API_KEY 或 VISION_MODEL 至少配一个）
+    if not api_key and not model:
+        return "", "", ""
+
+    # 缺失项从当前 provider 回落
+    provider_name = os.getenv("LLM_PROVIDER", "").lower().strip()
+    provider = PROVIDERS.get(provider_name)
+    if not api_key:
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        if not api_key and provider:
+            api_key = os.getenv(provider["api_key_env"], "")
+    if not base_url:
+        base_url = provider["base_url"] if provider else os.getenv("OPENAI_BASE_URL", "")
+    if not model:
+        if provider:
+            model = provider.get("vision_model") or provider["default_model"]
+        else:
+            model = os.getenv("OPENAI_MODEL", "")
 
     return api_key, base_url, model
 
@@ -120,7 +175,7 @@ def create_openai_client(purpose: str = "default"):
     创建 OpenAI 兼容客户端。
 
     Args:
-        purpose: 用途，可选 "default" | "resume" | "parse" | "match"
+        purpose: 用途，可选 "default" | "resume" | "parse" | "match" | "jd"
 
     Returns:
         (client, model) 二元组
@@ -128,6 +183,22 @@ def create_openai_client(purpose: str = "default"):
     from openai import OpenAI
 
     api_key, base_url, model = get_llm_config(purpose)
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    return client, model
+
+
+def create_vision_client():
+    """
+    创建视觉 (VL) 客户端。
+
+    Returns:
+        (client, model) 二元组；未配置视觉能力时返回 (None, "")
+    """
+    from openai import OpenAI
+
+    api_key, base_url, model = get_vision_config()
+    if not api_key or not base_url or not model:
+        return None, ""
     client = OpenAI(api_key=api_key, base_url=base_url)
     return client, model
 

@@ -9,7 +9,7 @@ from app.skills.builtin_skills import (
     FileReaderSkill, EchoSkill,
 )
 from app.skills.jd_parser import JDParseSkill
-from app.skills.common.ocr import OCREngine
+from app.skills.common.ocr import OCREngine, get_shared_ocr
 from app.skills.resume_optimizer import ResumeOptimizeSkill
 from app.skills.resume_jd_matcher import ResumeJDMatcherSkill
 from app.workflows.builtin_workflows import (
@@ -18,22 +18,16 @@ from app.workflows.builtin_workflows import (
 )
 from app.workflows.jd_workflow import create_jd_parse_workflow
 
-# PDF OCR 引擎（懒加载单例）
-_ocr_engine: Optional[OCREngine] = None
-# 全局 Agent 蓝图（skills/workflows/config 共享）
+# OCR 引擎全局共享（懒加载单例见 app/skills/common/ocr.py 的 get_shared_ocr）
 _base_agent: Optional[Agent] = None
 # 会话 Agent 池 {session_id: Agent}
 _session_agents: Dict[str, Agent] = {}
 _MAX_SESSION_AGENTS = 1000
 
 async def _get_ocr_engine() -> OCREngine:
-    """延迟初始化 OCR 引擎，用于 PDF 页面识别"""
-    global _ocr_engine
-    if _ocr_engine is None:
-        _ocr_engine = OCREngine()
-        engine_name = await _ocr_engine.initialize()
-        print(f"[Web] PDF OCR 引擎就绪: {engine_name}")
-    return _ocr_engine
+    """获取全局共享 OCR 引擎（所有模块共用同一实例）"""
+    engine = await get_shared_ocr()
+    return engine
 
 def get_agent(session_id: str = "") -> Agent:
     """

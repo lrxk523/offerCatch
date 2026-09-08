@@ -5,12 +5,7 @@ from typing import Optional
 
 from app.agent.skill import Skill, SkillResult
 from app.skills.resume_optimizer.parser import ResumeParser, ResumeData
-from app.skills.common.text_cleaner import JDTextCleaner
-from app.skills.jd_parser.parser import (
-    JDSectionSplitter,
-    JDExtractor,
-    JDParsedResult,
-)
+from app.skills.jd_parser.parser import JDParsedResult
 
 from .matcher import KeywordExtractor, ResumeJDMatcher, MatchResult, LLMMatcher, OCRKeywordMatcher
 from .visualizer import MatchVisualizer
@@ -116,11 +111,10 @@ class ResumeJDMatcherSkill(Skill):
                 print(f"[Matcher] 简历解析失败({e})，使用原始文本")
                 resume_data = None
 
-            # ---- 第2步: 解析 JD 为结构化数据 ----
+            # ---- 第2步: 解析 JD 为结构化数据 (LLM 抽取) ----
             try:
-                cleaned_jd = JDTextCleaner.clean(jd_text.strip())
-                jd_sections = JDSectionSplitter.split(cleaned_jd)
-                jd_result: JDParsedResult = JDExtractor.extract(cleaned_jd, jd_sections)
+                from app.skills.jd_parser.parser import JDLLMParser
+                jd_result: JDParsedResult = await JDLLMParser.parse_text(jd_text.strip())
             except Exception as e:
                 print(f"[Matcher] JD 解析失败({e})，使用原始文本")
                 jd_result = JDParsedResult()
@@ -299,9 +293,8 @@ class ResumeJDMatcherSkill(Skill):
             # ---- 第1步: 从 JD 提取关键词 ----
             print("[Matcher-OCR] 从 JD 提取关键词...")
             try:
-                cleaned_jd = JDTextCleaner.clean(jd_text.strip())
-                jd_sections = JDSectionSplitter.split(cleaned_jd)
-                jd_result: JDParsedResult = JDExtractor.extract(cleaned_jd, jd_sections)
+                from app.skills.jd_parser.parser import JDLLMParser
+                jd_result: JDParsedResult = await JDLLMParser.parse_text(jd_text.strip())
             except Exception as e:
                 print(f"[Matcher-OCR] JD 解析失败({e})，使用原始文本")
                 jd_result = JDParsedResult()

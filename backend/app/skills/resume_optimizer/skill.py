@@ -8,7 +8,7 @@ from typing import Optional
 from app.agent.skill import Skill, SkillResult
 from .parser import ResumeParser, ResumeData, LLMResumeParser
 from .optimizer import ResumeOptimizer
-from app.skills.common.ocr import OCREngine
+from app.skills.common.ocr import OCREngine, get_shared_ocr
 
 
 class ResumeOptimizeSkill(Skill):
@@ -34,16 +34,13 @@ class ResumeOptimizeSkill(Skill):
 
     def __init__(self):
         self._ocr: Optional[OCREngine] = None
-        self._ocr_ready = False
         self._optimizer: Optional[ResumeOptimizer] = None
 
     async def _ensure_ocr(self):
-        """延迟初始化 OCR 引擎"""
-        if self._ocr_ready:
+        """获取全局共享 OCR 引擎（与 API 层/其他 skill 同实例）"""
+        if self._ocr is not None:
             return
-        self._ocr = OCREngine()
-        await self._ocr.initialize()
-        self._ocr_ready = True
+        self._ocr = await get_shared_ocr()
 
     def _ensure_optimizer(self):
         """延迟初始化优化器"""

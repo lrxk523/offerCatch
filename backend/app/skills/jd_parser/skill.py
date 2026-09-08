@@ -1,18 +1,10 @@
-"""JD 解析 Skill - 上传截图/文本 → OCR → 清洗 → 结构化提取"""
+"""JD 解析 Skill - 上传截图/文本 → LLM/VL 结构化提取 → 结果展示"""
 
 import json
-import asyncio
 from typing import Optional
-from dataclasses import asdict
 
 from app.agent.skill import Skill, SkillResult
-from app.skills.common.ocr import OCREngine
-from .parser import (
-    JDTextCleaner,
-    JDSectionSplitter,
-    JDExtractor,
-    JDParsedResult,
-)
+from .parser import JDLLMParser, JDParsedResult
 
 
 class JDParseSkill(Skill):
@@ -35,18 +27,6 @@ class JDParseSkill(Skill):
         "解析岗位", "分析这个岗位", "分析jd",
     ]
 
-    def __init__(self):
-        self._ocr: Optional[OCREngine] = None
-        self._ocr_ready = False
-
-    async def _ensure_ocr(self):
-        """延迟初始化 OCR 引擎"""
-        if self._ocr_ready:
-            return
-        self._ocr = OCREngine()
-        await self._ocr.initialize()
-        self._ocr_ready = True
-
     async def execute(
         self,
         image_path: str = "",
@@ -55,7 +35,7 @@ class JDParseSkill(Skill):
         **kwargs,
     ) -> SkillResult:
         """
-        执行 JD 解析。
+        执行 JD 结构化解析。
 
         输入方式 (三选一):
           - image_path: 本地图片路径
@@ -64,25 +44,27 @@ class JDParseSkill(Skill):
         """
         try:
             raw_text = ""
+            result: Optional[JDParsedResult] = None
 
-            # ---- 第1步: 获取原始文本 ----
+            # ---- 第1步: 获取结构化结果 ----
             if text:
-                # 直接使用文本
+                # 文本直通 LLM 结构化抽取
                 raw_text = text
+                result = await JDLLMParser.parse_text(text)
 
             elif image_path or image_base64:
-                # OCR 提取文字
-                await self._ensure_ocr()
+                # 视觉模型直读截图（无需先 OCR 再正则）
                 image_input = image_base64 if image_base64 else image_path
-                raw_text = await self._ocr.extract_text(image_input)
-                if not raw_text or len(raw_text.strip()) < 5:
+                try:
+                    result = await JDLLMParser.parse_image(image_input)
+                except Exception as e:
                     return SkillResult(
                         success=False,
                         message=(
-                            "OCR 未能识别到有效文字，请检查图片是否清晰或尝试直接粘贴文本。"
-                            f"（OCR引擎: {self._ocr.engine_name}）"
+                            f"JD 图片解析失败: {e}。"
+                            "请确认已配置视觉模型 (VISION_API_KEY/VISION_BASE_URL/VISION_MODEL)，"
+                            "或尝试直接粘贴 JD 文本。"
                         ),
-                        data={"ocr_engine": self._ocr.engine_name},
                     )
             else:
                 return SkillResult(
@@ -90,23 +72,10 @@ class JDParseSkill(Skill):
                     message="请提供 JD 文本 (text) 或图片 (image_path/image_base64)",
                 )
 
-            # ---- 第2步: 清洗文本 ----
-            cleaned_text = JDTextCleaner.clean(raw_text)
+            if result is None:
+                return SkillResult(success=False, message="JD 解析未产生结果")
 
-            if not cleaned_text or len(cleaned_text.strip()) < 10:
-                return SkillResult(
-                    success=False,
-                    message="清洗后无有效内容，请确认输入的是完整的 JD 信息",
-                    data={"raw_length": len(raw_text), "raw_preview": raw_text[:200]},
-                )
-
-            # ---- 第3步: 分段 ----
-            sections = JDSectionSplitter.split(cleaned_text)
-
-            # ---- 第4步: 提取结构化信息 ----
-            result: JDParsedResult = JDExtractor.extract(cleaned_text, sections)
-
-            # ---- 格式化输出 ----
+            # ---- 第2步: 格式化展示 ----
             formatted = self._format_result(result)
 
             return SkillResult(
@@ -116,17 +85,18 @@ class JDParseSkill(Skill):
                     "location": result.location,
                     "salary": result.salary,
                     "education": result.education,
+                    "experience": result.experience,
+                    "benefits": result.benefits,
                     "responsibilities": result.responsibilities,
                     "requirements": result.requirements,
+                    "other_info": result.other_info,
                     "raw_text": raw_text[:500],
-                    "cleaned_text": cleaned_text[:500],
+                    "cleaned_text": raw_text[:500],
                 },
                 message=f"# 📋 JD 解析结果\n\n{formatted}",
                 metadata={
                     "raw_length": len(raw_text),
-                    "cleaned_length": len(cleaned_text),
-                    "sections_found": [k for k, v in sections.items() if v],
-                    "confidence": result.parse_confidence,
+                    "parse_mode": "llm_text" if text else "vl_image",
                 },
             )
 
@@ -134,7 +104,7 @@ class JDParseSkill(Skill):
             return SkillResult(success=False, message=f"JD 解析失败: {str(e)}")
 
     def _format_result(self, result: JDParsedResult) -> str:
-        """格式化解析结果为可读文本，只输出用户关心的 6 个字段"""
+        """格式化解析结果为可读文本"""
         lines = []
 
         if result.job_title:
@@ -146,8 +116,14 @@ class JDParseSkill(Skill):
         if result.salary:
             lines.append(f"薪资：{result.salary}")
 
+        if result.experience:
+            lines.append(f"经验：{result.experience}")
+
         if result.education:
             lines.append(f"学历：{result.education}")
+
+        if result.benefits:
+            lines.append(f"福利：{'、'.join(result.benefits)}")
 
         if result.responsibilities:
             lines.append(f"\n岗位职责：")
@@ -158,6 +134,9 @@ class JDParseSkill(Skill):
             lines.append(f"\n岗位要求：")
             for i, item in enumerate(result.requirements, 1):
                 lines.append(f"  {i}. {item}")
+
+        if result.other_info:
+            lines.append(f"\n其他信息：{result.other_info}")
 
         return "\n".join(lines)
 
