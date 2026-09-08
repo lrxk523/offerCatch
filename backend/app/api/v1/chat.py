@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse, JSONResponse
 
 from app.agent import Agent
-from app.schemas.request import ChatRequest
+from app.schemas.request import ChatRequest, ClearRequest
 from app.services.agent_runtime import get_agent
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -52,8 +52,9 @@ async def status():
     return JSONResponse(agent.status())
 
 @router.post("/clear")
-async def clear_history():
-    agent = get_agent()
+async def clear_history(req: Optional[ClearRequest] = None):
+    session_id = req.session_id if req else "default"
+    agent = get_agent(session_id=session_id)
     agent.clear_history()
-    return JSONResponse({"success": True})
+    return JSONResponse({"success": True, "session_id": session_id})
 

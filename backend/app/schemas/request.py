@@ -6,6 +6,9 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
 
+class ClearRequest(BaseModel):
+    session_id: str = "default"
+
 class JDTextRequest(BaseModel):
     text: str
 

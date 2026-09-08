@@ -188,6 +188,14 @@ class Agent:
                 tool_result = await self._execute_tool(tc.function.name, tc.function.arguments)
                 tool_results.append(json.loads(tool_result))
 
+            # tool 响应先入历史：assistant(tool_calls) 后必有对应 tool 消息（内存），序列才合法
+            for i, tc in enumerate(msg.tool_calls):
+                self._conversation_history.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(tool_results[i], ensure_ascii=False),
+                })
+
             # ★ 如果 Skill 已返回格式化好的 message，直接展示
             display_text = None
             for tr in tool_results:
@@ -198,14 +206,6 @@ class Agent:
             if display_text:
                 self._add_to_history("assistant", display_text)
                 return display_text
-
-            # 没有直接展示内容，把 tool 结果发给 LLM 组织语言
-            for i, tc in enumerate(msg.tool_calls):
-                self._conversation_history.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": json.dumps(tool_results[i], ensure_ascii=False),
-                })
 
         # 超出轮次或正常结束
         if final_result:
@@ -308,6 +308,9 @@ class Agent:
                     "content": tool_result,
                 })
 
+            # tool 响应先入历史：assistant(tool_calls) 后必有对应 tool 消息（内存），序列才合法
+            self._conversation_history.extend(tool_messages)
+
             # ★ 关键改进：如果 Skill 已返回格式化好的 message，直接展示，不让 LLM 重包装
             display_text = None
             for tm in tool_messages:
@@ -325,9 +328,6 @@ class Agent:
                 self._add_to_history("assistant", display_text)
                 yield display_text
                 return
-
-            # 没有直接展示内容，把 tool 结果发给 LLM 让 LLM 组织语言
-            self._conversation_history.extend(tool_messages)
 
     # ---- 工具执行 ----
 
