@@ -10,7 +10,7 @@ import logging
 from typing import Optional, List, Tuple
 from pathlib import Path
 from io import BytesIO
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +99,13 @@ class OCREngine:
                 " 或改回 OCR_ENGINE=auto 使用本地 OCR。"
             )
 
+        return await self._init_local_engine()
+
+    async def _init_local_engine(self) -> str:
+        """初始化本地 OCR 引擎（PaddleOCR > EasyOCR > tesseract）。失败 raise RuntimeError。
+
+        独立于 initialize() 的云优先分支，供云转录失败时降级重试复用。
+        """
         errors = []
         self._use_gpu = _detect_gpu()
         gpu_tag = "GPU" if self._use_gpu else "CPU"
@@ -179,8 +186,6 @@ class OCREngine:
         enhancer = ImageEnhance.Sharpness(image)
         image = enhancer.enhance(1.2)
 
-        image = image.filter(ImageFilter.MedianFilter(1))
-
         return image
 
     def _split_long_screenshot(self, image: Image.Image, max_height: int = 2000) -> List[Image.Image]:
@@ -202,7 +207,20 @@ class OCREngine:
         return slices
 
     async def extract_text(self, image_input, preprocess: bool = True) -> str:
-        """从图片提取文字"""
+        """从图片提取文字。云 VL 转录失败时自动降级本地 OCR 重试一次。"""
+        try:
+            return await self._extract_text_once(image_input, preprocess)
+        except Exception as e:
+            # 仅云转录失败需要降级；本地引擎失败直接抛出（无更低级可退）
+            if self._engine_type != "qwen_vl":
+                raise
+            logger.warning("[OCR] Qwen VL 转录失败(%s)，降级本地 OCR 重试", e)
+            print(f"[OCR] Qwen VL 转录失败({e})，降级本地 OCR 重试...")
+            await self._init_local_engine()
+            return await self._extract_text_once(image_input, preprocess=True)
+
+    async def _extract_text_once(self, image_input, preprocess: bool = True) -> str:
+        """单次提取（不降级）"""
         image = self._load_image(image_input)
 
         # 云 VL 转录不预处理（原图直接送模型，避免无谓放大/压缩）

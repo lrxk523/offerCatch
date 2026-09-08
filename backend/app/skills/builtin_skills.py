@@ -1,8 +1,11 @@
 """内置示例 Skills"""
 
 import json
+import re
+import fnmatch
 import datetime
 import asyncio
+from pathlib import Path
 from app.agent.skill import Skill, SkillResult
 
 
@@ -136,19 +139,70 @@ class TimeSkill(Skill):
 class FileReaderSkill(Skill):
     """文件读取 Skill"""
     name = "read_file"
-    description = "读取本地文件内容"
+    description = "读取项目 data 目录下的本地文件内容"
     keywords = ["读文件", "打开文件", "查看文件", "文件内容"]
     triggers = ["读文件", "读取文件"]
 
+    # 允许读取的根目录白名单（相对项目根）
+    _ALLOWED_ROOTS = [
+        "data",
+        "backend/data",
+        "uploads",
+        "backend/uploads",
+    ]
+    # 禁止读取的敏感文件名（无论路径）
+    _SENSITIVE_NAMES = [
+        ".env", ".env.local", ".env.production",
+        "id_rsa", "id_ed25519", "*.pem", "*.key",
+        "config.yaml", "config.yml", "settings.py",
+    ]
+
+    def _resolve_safe_path(self, filepath: str) -> str:
+        """校验路径在允许根目录内，返回规范化绝对路径。越权抛 ValueError。"""
+        raw = filepath.replace("\\", "/").strip()
+        if not raw or raw.startswith(("/", "~")):
+            raise ValueError(f"仅允许读取项目 data/uploads 目录内的相对路径: {filepath}")
+        # 协议前缀 / Windows 盘符 / UNC 一律拒绝
+        if re.match(r"^[a-zA-Z][:\\\\]", raw) or raw.startswith(("//", "\\\\")):
+            raise ValueError(f"不允许绝对路径/盘符: {filepath}")
+        parts = [p for p in raw.split("/") if p not in ("", ".")]
+        if any(p == ".." for p in parts):
+            raise ValueError(f"不允许路径穿越: {filepath}")
+        proj_root = Path(__file__).resolve().parent.parent.parent.parent  # app/skills → 项目根
+        candidate = (proj_root / raw).resolve()
+        # 必须在某个允许根目录内
+        for root in self._ALLOWED_ROOTS:
+            allowed = (proj_root / root).resolve()
+            try:
+                candidate.relative_to(allowed)
+                break
+            except ValueError:
+                continue
+        else:
+            raise ValueError(f"仅允许读取项目 data/uploads 目录内文件: {filepath}")
+        # 敏感文件名拦截
+        name = candidate.name.lower()
+        if any(
+            fnmatch.fnmatch(name, pat)
+            for pat in [p.lower() for p in self._SENSITIVE_NAMES]
+        ):
+            raise ValueError(f"禁止读取敏感文件: {candidate.name}")
+        if not candidate.is_file():
+            raise FileNotFoundError(filepath)
+        return str(candidate)
+
     async def execute(self, filepath: str = "", **kwargs) -> SkillResult:
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
+            safe_path = self._resolve_safe_path(filepath)
+            with open(safe_path, "r", encoding="utf-8") as f:
                 content = f.read()
             return SkillResult(
                 success=True,
                 data={"filepath": filepath, "content": content[:2000]},
                 message=f"文件 {filepath} 读取成功 ({len(content)} 字符)",
             )
+        except ValueError as e:
+            return SkillResult(success=False, message=str(e))
         except FileNotFoundError:
             return SkillResult(success=False, message=f"文件不存在: {filepath}")
         except Exception as e:

@@ -1,9 +1,13 @@
-"""Redis 连接工具 — 连接池 + 常用操作封装"""
+"""Redis 连接工具 — 连接池 + 常用操作封装（连接失败时静默降级为内存空实现）"""
 
 import os
 import json
+import time
+import logging
 from typing import Optional, Any, Union
 from redis import Redis, ConnectionPool
+
+logger = logging.getLogger(__name__)
 
 
 class RedisConfig:
@@ -16,40 +20,138 @@ class RedisConfig:
     PREFIX = "offercatch:"
 
 
+class _NullRedis:
+    """Redis 不可用时的内存降级存根。
+
+    所有方法返回类型安全的空值（不抛异常），使上层（chat_history/resume_store/
+    缓存）在无 Redis 时静默降级：对话退化为纯内存、缓存不命中但功能不中断。
+    """
+
+    def ping(self) -> bool:
+        return False
+
+    def get(self, *a, **k):
+        return None
+
+    def set(self, *a, **k) -> bool:
+        return True
+
+    def delete(self, *a, **k) -> int:
+        return 0
+
+    def exists(self, *a, **k) -> int:
+        return 0
+
+    def ttl(self, *a, **k) -> int:
+        return -2
+
+    def expire(self, *a, **k) -> bool:
+        return True
+
+    def rpush(self, *a, **k) -> int:
+        return 0
+
+    def lpush(self, *a, **k) -> int:
+        return 0
+
+    def rpop(self, *a, **k):
+        return None
+
+    def lrange(self, *a, **k) -> list:
+        return []
+
+    def hset(self, *a, **k) -> int:
+        return 0
+
+    def hget(self, *a, **k):
+        return None
+
+    def hgetall(self, *a, **k) -> dict:
+        return {}
+
+    def incrby(self, *a, **k) -> int:
+        return 0
+
+    def close(self):
+        pass
+
+    def disconnect(self):
+        pass
+
+
 _pool: Optional[ConnectionPool] = None
-_client: Optional[Redis] = None
+_client: Optional[Union[Redis, _NullRedis]] = None
+_null: Optional[_NullRedis] = None
+_last_fail_ts: float = 0.0
+_RETRY_INTERVAL = 30.0  # 失败后 30s 内不再重连，避免每次调用都等超时
+_connect_warned = False
 
 
-def get_redis() -> Redis:
-    """获取 Redis 客户端单例（连接池复用）"""
-    global _pool, _client
-    if _client is None:
+def _get_null() -> _NullRedis:
+    global _null
+    if _null is None:
+        _null = _NullRedis()
+    return _null
+
+
+def get_redis() -> Union[Redis, _NullRedis]:
+    """获取 Redis 客户端单例（连接池复用）。
+
+    连接失败时静默降级为 _NullRedis（内存空实现），并带 30s 退避自动重连；
+    Redis 中途恢复后无需重启进程即可自动重新生效。
+    """
+    global _pool, _client, _last_fail_ts, _connect_warned
+
+    # 已有可用连接
+    if _client is not None and not isinstance(_client, _NullRedis):
+        return _client
+
+    # 降级态且在退避期内 → 直接用空实现，不阻塞
+    if isinstance(_client, _NullRedis) and time.monotonic() - _last_fail_ts < _RETRY_INTERVAL:
+        return _client
+
+    # 首次尝试或退避期满 → 尝试建立真实连接
+    try:
         kwargs = {
             "host": RedisConfig.HOST,
             "port": RedisConfig.PORT,
             "db": RedisConfig.DB,
             "decode_responses": True,
-            "socket_connect_timeout": 5,
+            "socket_connect_timeout": 2,
             "socket_keepalive": True,
             "protocol": 2,  # RESP2，兼容旧版 Redis
         }
         if RedisConfig.PASSWORD:
             kwargs["password"] = RedisConfig.PASSWORD
 
-        _pool = ConnectionPool(max_connections=10, **kwargs)
-        _client = Redis(connection_pool=_pool)
-    return _client
+        pool = ConnectionPool(max_connections=10, **kwargs)
+        client = Redis(connection_pool=pool)
+        if client.ping():
+            _pool, _client = pool, client
+            if _connect_warned:
+                logger.info("[Redis] 连接恢复，已切换为真实 Redis")
+                _connect_warned = False
+            return client
+        pool.disconnect()
+        raise ConnectionError("ping failed")
+    except Exception as e:
+        _last_fail_ts = time.monotonic()
+        if not _connect_warned:
+            logger.warning("[Redis] 连接失败(%s)，降级为内存模式(对话不持久化/缓存不生效)，30s 后自动重试", e)
+            _connect_warned = True
+        _client = _get_null()
+        return _client
 
 
 def close_redis():
     """关闭 Redis 连接池"""
     global _pool, _client
-    if _client:
+    if _client is not None and not isinstance(_client, _NullRedis):
         _client.close()
-        _client = None
     if _pool:
         _pool.disconnect()
-        _pool = None
+    _pool = None
+    _client = None
 
 
 def _key(name: str) -> str:

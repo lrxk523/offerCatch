@@ -12,8 +12,16 @@ from app.services.agent_runtime import get_agent
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
-JD_KEYWORDS = {"岗位职责", "任职要求", "岗位要求", "职位描述",
-               "工作职责", "本科", "学历", "工程师", "招聘"}
+# JD 捷径触发词：必须包含 JD 结构特征词（职责/要求等），避免"应聘工程师/本科学历"等
+# 泛职业词误触发。意图词（分析/解析/看看/帮忙）作为补充命中条件。
+JD_KEYWORDS = {
+    # JD 结构特征词（强信号）
+    "岗位职责", "任职要求", "岗位要求", "职位描述", "工作职责", "任职资格",
+    "岗位JD", "岗位jd", "职位jd", "职位JD", "招聘JD", "招聘jd",
+    # 意图词（弱信号，需与 JD 上下文组合才触发）
+    "分析这个JD", "解析这个JD", "看看这个JD", "分析这个jd", "解析这个jd", "看看这个jd",
+    "帮我分析JD", "帮我解析JD", "帮我看看JD", "帮我分析jd", "帮我解析jd", "帮我看看jd",
+}
 
 async def _try_direct_skill(agent: Agent, message: str) -> Optional[str]:
     """检测消息是否匹配 Skill 意图，是则直接调用返回格式化结果。"""
