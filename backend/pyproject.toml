@@ -1,0 +1,10 @@
+# offerCatch 后端工程配置（结构照 ai_assistant_demo 骨架）
+# 依赖统一在 requirements.txt 里维护。
+[project]
+name = "offercatch-backend"
+version = "1.0.0"
+description = "OfferCatch 求职助手后端（FastAPI + LLM Agent）"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

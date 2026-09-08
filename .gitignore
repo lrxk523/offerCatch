@@ -1,0 +1,29 @@
+# 环境变量 - 包含 API Key 等敏感信息
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 生成的 PDF
+front/pdf/
+
+# 虚拟环境
+venv/
+.venv/
+env/

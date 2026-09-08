@@ -1,0 +1,18 @@
+openai>=1.0.0
+python-dotenv>=1.0.0
+Pillow>=10.0.0
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+reportlab>=4.0.0
+PyMuPDF>=1.23.0
+redis>=5.0.0
+pydantic>=2.0.0
+
+# OCR 引擎 (三选一，推荐 PaddleOCR)
+paddlepaddle
+paddleocr
+# 备选: pip install easyocr
+# 备选: pip install pytesseract (需额外安装 tesseract)
+
+
+
