@@ -68,6 +68,7 @@ class ResumeOptimizeSkill(Skill):
         """
         try:
             raw_text = ""
+            on_progress = kwargs.get("on_progress")  # 阶段进度回调（resume.py 注入 → 转发 SSE）
 
             # ---- 从 Redis 加载简历 ----
             if resume_id and not text and not image_base64 and not image_path:
@@ -110,7 +111,8 @@ class ResumeOptimizeSkill(Skill):
                 )
 
             # ---- 第2+3步: 解析 + 优化 (合并为单次 LLM 调用) ----
-            use_combined = os.getenv("RESUME_COMBINED_LLM", "1") != "0"
+            # 提供 on_progress 时强制分步：合并是单次 LLM 调用，中间无阶段可报
+            use_combined = os.getenv("RESUME_COMBINED_LLM", "1") != "0" and not on_progress
 
             if use_combined:
                 # 快速路径：一次 LLM 调用同时完成解析+优化
@@ -126,9 +128,12 @@ class ResumeOptimizeSkill(Skill):
                     use_combined = False
 
             if not use_combined:
-                # 慢速路径：先解析，再优化（两次 LLM 调用）
+                # 慢速路径：先解析，再优化（两次 LLM 调用，可报阶段进度）
+                if on_progress:
+                    await on_progress("llm", "正在提取简历结构化信息（教育/工作/项目/技能）...")
                 try:
-                    resume_data: ResumeData = ResumeParser.parse(raw_text)
+                    loop = asyncio.get_event_loop()
+                    resume_data: ResumeData = await loop.run_in_executor(None, ResumeParser.parse, raw_text)
                 except Exception as parse_err:
                     traceback.print_exc()
                     return SkillResult(success=False, message=f"简历解析失败: {str(parse_err)}")
@@ -146,6 +151,9 @@ class ResumeOptimizeSkill(Skill):
                         data={"raw_text_preview": raw_text[:300]},
                     )
 
+                if on_progress:
+                    pos = f"（目标岗位：{target_position}）" if target_position else ""
+                    await on_progress("llm", f"AI 正在逐段审计并实质性改写简历{pos}...")
                 try:
                     self._ensure_optimizer()
                     loop = asyncio.get_event_loop()

@@ -1,5 +1,6 @@
 """简历接口：/api/resume/optimize-file|optimize-text (SSE)、GET /api/resume/{id}"""
 
+import asyncio
 import base64
 import json
 import traceback
@@ -41,9 +42,17 @@ async def optimize_resume_file(file: UploadFile = File(...), target_position: st
                 extracted_text = cached
                 yield _sse("progress", {"stage": "cache", "message": "检测到相同文件，使用缓存文本，跳过识别", "page": 0, "total": 1})
                 yield _sse("progress", {"stage": "llm", "message": "正在 AI 分析优化简历...", "page": 1, "total": 1})
-                result = await agent.invoke_skill(
-                    "optimize_resume", text=extracted_text, target_position=target_position
-                )
+                result = None
+                async for _kind, _a, _b in _invoke_optimize(
+                    agent, text=extracted_text, target_position=target_position
+                ):
+                    if _kind == "progress":
+                        yield _sse("progress", {"stage": _a, "message": _b, "page": 0, "total": 1})
+                    elif _kind == "error":
+                        yield _sse("error", {"message": str(_a)})
+                        return
+                    else:
+                        result = _a
             elif is_pdf:
                 # ---- PDF 路径：先试文字层，失败才渲染 OCR ----
                 from app.skills.common.pdf_utils import pdf_to_text
@@ -56,9 +65,17 @@ async def optimize_resume_file(file: UploadFile = File(...), target_position: st
                     extracted_text = layer_text
                     set_text_cache(fhash, extracted_text)
                     yield _sse("progress", {"stage": "llm", "message": "正在 AI 分析优化简历...", "page": 1, "total": 1})
-                    result = await agent.invoke_skill(
-                        "optimize_resume", text=extracted_text, target_position=target_position
-                    )
+                    result = None
+                    async for _kind, _a, _b in _invoke_optimize(
+                        agent, text=extracted_text, target_position=target_position
+                    ):
+                        if _kind == "progress":
+                            yield _sse("progress", {"stage": _a, "message": _b, "page": 0, "total": 1})
+                        elif _kind == "error":
+                            yield _sse("error", {"message": str(_a)})
+                            return
+                        else:
+                            result = _a
                 else:
                     # 扫描件：渲染每页为图片 → OCR/云转录
                     from app.skills.common.pdf_utils import render_pdf_pages
@@ -93,17 +110,33 @@ async def optimize_resume_file(file: UploadFile = File(...), target_position: st
                     set_text_cache(fhash, extracted_text)
 
                     yield _sse("progress", {"stage": "llm", "message": "正在 AI 分析优化简历...", "page": total_pages, "total": total_pages})
-                    result = await agent.invoke_skill(
-                        "optimize_resume", text=pdf_text, target_position=target_position
-                    )
+                    result = None
+                    async for _kind, _a, _b in _invoke_optimize(
+                        agent, text=pdf_text, target_position=target_position
+                    ):
+                        if _kind == "progress":
+                            yield _sse("progress", {"stage": _a, "message": _b, "page": 0, "total": 1})
+                        elif _kind == "error":
+                            yield _sse("error", {"message": str(_a)})
+                            return
+                        else:
+                            result = _a
             else:
                 # ---- 图片路径：OCR/云转录后走 LLM（skill 内完成）----
                 yield _sse("progress", {"stage": "ocr", "message": "正在识别图片内容...", "page": 0, "total": 1})
                 image_b64 = base64.b64encode(contents).decode("utf-8")
                 yield _sse("progress", {"stage": "llm", "message": "正在 AI 分析优化简历...", "page": 1, "total": 1})
-                result = await agent.invoke_skill(
-                    "optimize_resume", image_base64=image_b64, target_position=target_position
-                )
+                result = None
+                async for _kind, _a, _b in _invoke_optimize(
+                    agent, image_base64=image_b64, target_position=target_position
+                ):
+                    if _kind == "progress":
+                        yield _sse("progress", {"stage": _a, "message": _b, "page": 0, "total": 1})
+                    elif _kind == "error":
+                        yield _sse("error", {"message": str(_a)})
+                        return
+                    else:
+                        result = _a
                 if result and result.success and result.data:
                     extracted_text = result.data.get("raw_text", "")
                     if extracted_text:
@@ -152,6 +185,32 @@ def _sse(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+async def _invoke_optimize(agent, **kwargs):
+    """调用 optimize_resume skill 并转发其 on_progress 阶段帧（异步队列桥接）。
+
+    yield ("progress", stage, message) 逐阶段实时转发；结束 yield ("result", r, None)
+    或 ("error", e, None)。调用方在 async for 中把 progress 帧转为 SSE 发给前端。
+    """
+    q: asyncio.Queue = asyncio.Queue()
+
+    async def _on_progress(stage: str, message: str):
+        await q.put(("progress", stage, message))
+
+    async def _worker():
+        try:
+            r = await agent.invoke_skill("optimize_resume", on_progress=_on_progress, **kwargs)
+            await q.put(("result", r, None))
+        except Exception as e:
+            await q.put(("error", e, None))
+
+    asyncio.create_task(_worker())
+    while True:
+        kind, a, b = await q.get()
+        yield (kind, a, b)
+        if kind in ("result", "error"):
+            return
+
+
 @router.post("/resume/optimize-text")
 async def optimize_resume_text(req: JDTextRequest):
     agent = get_agent()
@@ -159,7 +218,15 @@ async def optimize_resume_text(req: JDTextRequest):
     async def generate():
         try:
             yield _sse("progress", {"stage": "llm", "message": "正在 AI 分析优化简历...", "page": 0, "total": 1})
-            result = await agent.invoke_skill("optimize_resume", text=req.text)
+            result = None
+            async for _kind, _a, _b in _invoke_optimize(agent, text=req.text):
+                if _kind == "progress":
+                    yield _sse("progress", {"stage": _a, "message": _b, "page": 0, "total": 1})
+                elif _kind == "error":
+                    yield _sse("error", {"message": str(_a)})
+                    return
+                else:
+                    result = _a
             if result and result.success:
                 # ---- 存入 Redis ----
                 resume_id = str(uuid.uuid4())[:8]
