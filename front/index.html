@@ -1794,10 +1794,6 @@
 
             html += '</div>';
 
-            if (message) {
-                html += `<p style="margin-top:10px;white-space:pre-wrap;font-size:13px;color:var(--mui-text-secondary)">${escapeHtml(message)}</p>`;
-            }
-
             bubble.innerHTML = html;
             scrollToBottom();
         }
