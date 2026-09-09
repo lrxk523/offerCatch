@@ -151,6 +151,7 @@ class JDLLMParser:
                 ],
                 max_tokens=4096,
                 temperature=0.1,
+                extra_body={"reasoning_effort": "none"},  # DeepSeek v4 关思考：超长思考致 content 空返回
             )
             return (resp.choices[0].message.content or "").strip()
 

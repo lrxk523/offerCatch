@@ -19,6 +19,8 @@ PROVIDERS = {
         "name": "DeepSeek",
         "base_url": "https://api.deepseek.com/v1",
         "default_model": "deepseek-v4-flash",
+        # resume/match 等长输出任务调用处带 extra_body reasoning_effort=none 关思考
+        # （2026-09-09 实测：v4 系思考超长 12000+ tokens 后 content 空返回，关闭后稳定且快 3-4 倍）
         "resume_model": "deepseek-v4-pro",
         "parse_model": "deepseek-v4-flash",
         "api_key_env": "DEEPSEEK_API_KEY",

@@ -255,6 +255,7 @@ class LLMResumeParser:
                 max_tokens=4096,
                 temperature=0.1,
                 response_format={"type": "json_object"},
+                extra_body={"reasoning_effort": "none"},  # DeepSeek v4 关思考：超长思考致 content 空返回
             )
             result_text = (response.choices[0].message.content or "").strip()
 
@@ -310,8 +311,10 @@ class LLMResumeParser:
                 max_tokens=6144,
                 temperature=temperature,
                 response_format={"type": "json_object"},
+                extra_body={"reasoning_effort": "none"},  # DeepSeek v4 关思考：超长思考致 content 空返回
             )
             result_text = (response.choices[0].message.content or "").strip()
+            print(f"[Parser] parse_and_optimize 原始返回: len={len(result_text)} head={result_text[:150]!r}")
 
             json_match = re.search(r'\{[\s\S]*\}', result_text)
             if not json_match:
