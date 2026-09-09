@@ -122,6 +122,24 @@ front/
 
 ## 📸 界面截图
 
-<!-- TODO: 截图另存到 screenshots/ 后替换下方两行 -->
-<!-- ![JD 解析](screenshots/jd-parse.png) -->
-<!-- ![匹配报告](screenshots/match-report.png) -->
+### 🏠 主页
+
+![主页](screenshots/headindex.png)
+
+### 📋 JD 解析结果
+
+![JD 解析结果](screenshots/jd-parse-result.png)
+
+### 📝 简历优化
+
+| 上传界面 | 优化结果 |
+|---|---|
+| ![简历上传界面](screenshots/resume-ui.png) | ![简历优化结果](screenshots/resume-result.png) |
+
+### 📊 匹配度分析
+
+| 分析界面 | 分析结果 |
+|---|---|
+| ![匹配度分析界面](screenshots/match-ui.png) | ![匹配度分析结果](screenshots/match-result.png) |
+
+> 截图存放于 `screenshots/` 目录，文件名与上方一一对应。
