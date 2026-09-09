@@ -149,13 +149,9 @@ class JDParseSkill(Skill):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "image_path": {
-                            "type": "string",
-                            "description": "JD 截图的本地文件路径，如 /path/to/jd.png。与 image_base64 二选一",
-                        },
                         "image_base64": {
                             "type": "string",
-                            "description": "JD 截图的 base64 编码。与 image_path 二选一",
+                            "description": "JD 截图的 base64 编码",
                         },
                         "text": {
                             "type": "string",

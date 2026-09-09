@@ -321,10 +321,6 @@ class ResumeOptimizeSkill(Skill):
                             "type": "string",
                             "description": "简历截图的 base64 编码",
                         },
-                        "image_path": {
-                            "type": "string",
-                            "description": "简历截图的本地文件路径",
-                        },
                         "target_position": {
                             "type": "string",
                             "description": "求职者目标岗位，用于定向优化，如 '前端工程师'、'产品经理'",
