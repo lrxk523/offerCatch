@@ -252,7 +252,7 @@ class LLMResumeParser:
                     {"role": "system", "content": RESUME_PARSE_PROMPT},
                     {"role": "user", "content": f"## 简历文本\n\n{truncated}"},
                 ],
-                max_tokens=4096,
+                max_tokens=20000,
                 temperature=0.1,
                 response_format={"type": "json_object"},
                 extra_body={"reasoning_effort": "none"},  # DeepSeek v4 关思考：超长思考致 content 空返回
@@ -308,7 +308,7 @@ class LLMResumeParser:
                     {"role": "system", "content": PARSE_AND_OPTIMIZE_PROMPT},
                     {"role": "user", "content": user_content},
                 ],
-                max_tokens=6144,
+                max_tokens=20000,
                 temperature=temperature,
                 response_format={"type": "json_object"},
                 extra_body={"reasoning_effort": "none"},  # DeepSeek v4 关思考：超长思考致 content 空返回

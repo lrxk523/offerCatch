@@ -1086,7 +1086,7 @@ class LLMMatcher:
                     {"role": "system", "content": MATCH_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=4096,
+                max_tokens=20000,
                 temperature=0.1,
                 extra_body={"reasoning_effort": "none"},  # DeepSeek v4 关思考：超长思考致 content 空返回
             )

@@ -20,8 +20,9 @@ PROVIDERS = {
         "base_url": "https://api.deepseek.com/v1",
         "default_model": "deepseek-v4-flash",
         # resume/match 等长输出任务调用处带 extra_body reasoning_effort=none 关思考
-        # （2026-09-09 实测：v4 系思考超长 12000+ tokens 后 content 空返回，关闭后稳定且快 3-4 倍）
-        "resume_model": "deepseek-v4-pro",
+        # （2026-09-09 实测：v4 系思考超长 12000+ tokens 后 content 空返回，关闭后稳定且快）
+        # 2026-09-09 用户拍板：resume 优化统一 v4-flash + max_tokens 20000（flash 17s 快且稳，pro 可经 RESUME_MODEL 覆盖）
+        "resume_model": "deepseek-v4-flash",
         "parse_model": "deepseek-v4-flash",
         "api_key_env": "DEEPSEEK_API_KEY",
         "vision_model": None,  # DeepSeek API 无视觉能力（视觉统一走 VISION_*）
