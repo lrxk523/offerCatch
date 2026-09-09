@@ -136,11 +136,11 @@ class JDLLMParser:
     async def parse_text(cls, text: str) -> JDParsedResult:
         """文本 LLM 抽取 JD 结构化信息"""
         text = (text or "").strip()
-        result = JDParsedResult(raw_text_preview=text[:500], cleaned_text=text)
-
         client, model = cls._get_text_client()
         if not client:
-            return result
+            raise RuntimeError("未配置 LLM 客户端，请检查 LLM_PROVIDER 及对应 API Key 环境变量")
+
+        result = JDParsedResult(raw_text_preview=text[:500], cleaned_text=text)
 
         def _call():
             resp = client.chat.completions.create(
@@ -164,8 +164,8 @@ class JDLLMParser:
             mapped.parse_confidence = 1.0
             return mapped
         except Exception as e:
-            print(f"[JDLLMParser] 文本解析失败({e})，返回空结果")
-            return result
+            # 显式失败而非静默返回空结果：空结果会让上层误判"解析成功"（前端展示空卡片）
+            raise RuntimeError(f"LLM 调用失败: {e}") from e
 
     @classmethod
     async def parse_image(cls, image_input: str) -> JDParsedResult:
