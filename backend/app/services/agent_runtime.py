@@ -4,18 +4,10 @@ from typing import Dict, Optional
 
 from app.agent import Agent, AgentConfig
 
-from app.skills.builtin_skills import (
-    WeatherSkill, CalculatorSkill, TimeSkill,
-    FileReaderSkill, EchoSkill,
-)
 from app.skills.jd_parser import JDParseSkill
 from app.skills.common.ocr import OCREngine, get_shared_ocr
 from app.skills.resume_optimizer import ResumeOptimizeSkill
 from app.skills.resume_jd_matcher import ResumeJDMatcherSkill
-from app.workflows.builtin_workflows import (
-    create_daily_brief_workflow,
-    create_smart_calc_workflow,
-)
 from app.workflows.jd_workflow import create_jd_parse_workflow
 
 # OCR 引擎全局共享（懒加载单例见 app/skills/common/ocr.py 的 get_shared_ocr）
@@ -58,11 +50,11 @@ def _get_base_agent() -> Agent:
     if _base_agent is None:
         config = AgentConfig(
             system_prompt=(
-                "你是一个智能助手，名叫 OfferCatch。你可以使用以下工具：\n"
-                "- 查询天气、计算数学表达式、查看时间、读取文件\n"
-                "- parse_jd: 解析岗位 JD，提取结构化信息\n"
-                "- optimize_resume: 优化润色简历\n"
-                "- match_resume_jd: 分析简历与JD的关键词重合度和匹配度，生成可视化报告\n\n"
+                "你是一个 AI 求职助手，名叫 OfferCatch，帮助用户处理求职相关任务。"
+                "你可以使用以下技能：\n"
+                "- parse_jd: 解析岗位 JD（职位描述），提取岗位名称/职责/要求/薪资/地点等结构化信息\n"
+                "- optimize_resume: 优化润色简历，使其更匹配目标岗位\n"
+                "- match_resume_jd: 分析简历与 JD 的关键词重合度和匹配度，生成可视化报告\n\n"
                 "【JD 解析规则】\n"
                 "当用户发送 JD 文本或说「解析JD」「分析职位」时，调用 parse_jd。\n"
                 "如果用户直接粘贴了 JD 文本，将文本传给 parse_jd 的 text 参数。\n\n"
@@ -77,18 +69,9 @@ def _get_base_agent() -> Agent:
             temperature=0.7,
         )
         _agent = Agent(config)
-        _agent.register_skills(
-            WeatherSkill(),
-            CalculatorSkill(),
-            TimeSkill(),
-            FileReaderSkill(),
-            EchoSkill(),
-        )
         _agent.register_skill(JDParseSkill())
         _agent.register_skill(ResumeOptimizeSkill())
         _agent.register_skill(ResumeJDMatcherSkill())
-        _agent.register_workflow(create_daily_brief_workflow())
-        _agent.register_workflow(create_smart_calc_workflow())
         _agent.register_workflow(create_jd_parse_workflow())
         print("[Web] Agent 初始化完成")
     return _agent

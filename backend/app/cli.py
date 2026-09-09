@@ -3,17 +3,9 @@
 import asyncio
 import sys
 from app.agent import Agent, AgentConfig
-from app.skills.builtin_skills import (
-    WeatherSkill, CalculatorSkill, TimeSkill,
-    FileReaderSkill, EchoSkill,
-)
 from app.skills.jd_parser import JDParseSkill
 from app.skills.resume_optimizer import ResumeOptimizeSkill
 from app.skills.resume_jd_matcher import ResumeJDMatcherSkill
-from app.workflows.builtin_workflows import (
-    create_daily_brief_workflow,
-    create_smart_calc_workflow,
-)
 from app.workflows.jd_workflow import create_jd_parse_workflow
 
 
@@ -21,14 +13,12 @@ def build_agent() -> Agent:
     """构建并配置 Agent 实例"""
     config = AgentConfig(
         system_prompt=(
-            "你是一个智能助手，名叫 OfferCatch。"
-            "你可以查询天气、计算数学表达式、查看时间、读取文件、解析岗位 JD 等。"
-            "当用户说「帮我解析这个 JD」「帮我分析这个职位」或者发送岗位描述时，"
-            "请调用 parse_jd 工具来提取结构化的岗位信息。"
+            "你是一个 AI 求职助手，名叫 OfferCatch。"
+            "当用户说「帮我解析这个 JD」「帮我分析这个职位」或粘贴岗位描述文本时，"
+            "请调用 parse_jd 工具（将文本传给 text 参数）来提取结构化的岗位信息。"
+            "当用户说「优化简历」「帮我改简历」并提供简历内容时，请调用 optimize_resume 工具。"
             "当用户说「匹配度分析」「简历匹配」或需要对比简历和JD时，"
             "请调用 match_resume_jd 工具来生成匹配度可视化分析报告。"
-            "如果用户提供了 JD 图片路径，请将路径传给 parse_jd 的 image_path 参数。"
-            "如果用户直接粘贴了 JD 文本，请将文本传给 parse_jd 的 text 参数。"
             "调用工具后，将结果用自然语言呈现给用户，不要输出 JSON。"
             "请始终用中文回复。"
         ),
@@ -36,27 +26,12 @@ def build_agent() -> Agent:
     )
     agent = Agent(config)
 
-    # 注册内置 Skills
-    agent.register_skills(
-        WeatherSkill(),
-        CalculatorSkill(),
-        TimeSkill(),
-        FileReaderSkill(),
-        EchoSkill(),
-    )
-
-    # 注册 JD 解析 Skill
+    # 注册求职领域 Skills
     agent.register_skill(JDParseSkill())
-
-    # 注册简历优化 Skill
     agent.register_skill(ResumeOptimizeSkill())
-
-    # 注册简历-JD匹配度分析 Skill
     agent.register_skill(ResumeJDMatcherSkill())
 
-    # 注册内置 Workflows
-    agent.register_workflow(create_daily_brief_workflow())
-    agent.register_workflow(create_smart_calc_workflow())
+    # 注册 Workflow
     agent.register_workflow(create_jd_parse_workflow())
 
     return agent

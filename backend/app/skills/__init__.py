@@ -1,3 +1,1 @@
-from .builtin_skills import WeatherSkill, CalculatorSkill, TimeSkill, FileReaderSkill, EchoSkill
-
-__all__ = ["WeatherSkill", "CalculatorSkill", "TimeSkill", "FileReaderSkill", "EchoSkill"]
+"""技能包：领域技能以子包形式组织（jd_parser / resume_optimizer / resume_jd_matcher）"""
