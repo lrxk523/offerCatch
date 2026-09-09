@@ -98,6 +98,7 @@ class ResumeOptimizer:
                 ],
                 max_tokens=4096,
                 temperature=temperature,
+                response_format={"type": "json_object"},
             )
             result_text = (response.choices[0].message.content or "").strip()
             optimized = self._parse_json_response(result_text, resume)

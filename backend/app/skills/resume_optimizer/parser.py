@@ -254,6 +254,7 @@ class LLMResumeParser:
                 ],
                 max_tokens=4096,
                 temperature=0.1,
+                response_format={"type": "json_object"},
             )
             result_text = (response.choices[0].message.content or "").strip()
 
@@ -308,6 +309,7 @@ class LLMResumeParser:
                 ],
                 max_tokens=6144,
                 temperature=temperature,
+                response_format={"type": "json_object"},
             )
             result_text = (response.choices[0].message.content or "").strip()
 
